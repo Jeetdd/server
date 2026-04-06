@@ -77,8 +77,14 @@ export const getOrders = async (req: Request, res: Response) => {
 export const updateOrderStatus = async (req: Request, res: Response) => {
   try {
     const { status } = req.body;
+    const orderId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+
+    if (!orderId) {
+      return res.status(400).json({ message: 'Order id is required' });
+    }
+
     const order = await prisma.order.update({
-      where: { id: req.params.id },
+      where: { id: orderId },
       data: { status },
       include: { user: true, items: true }
     });
