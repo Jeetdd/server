@@ -27,6 +27,9 @@
     "pg": "^8.20.0",
     "razorpay": "^2.9.6"
   },
+  "overrides": {
+    "cloudinary": "$cloudinary"
+  },
   "devDependencies": {
     "@prisma/client": "^5.22.0",
     "@types/bcryptjs": "^2.4.6",
