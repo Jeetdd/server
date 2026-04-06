@@ -1,0 +1,4 @@
+﻿src/controllers/orderController.ts(81,16): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/scripts/seedMedicines.ts(1,22): error TS2307: Cannot find module 'mongoose' or its corresponding type declarations.
+src/scripts/seedMedicines.ts(4,22): error TS2307: Cannot find module '../models/Medicine' or its corresponding type declarations.
