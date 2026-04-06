@@ -1,0 +1,126 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  password     String?
+  role         Role     @default(USER)
+  phone        String?
+  isRegistered Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  Order        Order[]
+}
+
+enum Role {
+  USER
+  ADMIN
+  PHARMACIST
+}
+
+model Medicine {
+  id                   String      @id @default(uuid())
+  name                 String      @unique
+  price                Float
+  stock                Int         @default(0)
+  description          String?
+  image                String?
+  category             String
+  requiresPrescription Boolean     @default(true)
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  OrderItems           OrderItem[]
+}
+
+model Order {
+  id                      String      @id @default(uuid())
+  userId                  String
+  user                    User        @relation(fields: [userId], references: [id])
+  items                   OrderItem[]
+  totalAmount             Float
+  finalAmount             Float
+  prescriptionImage       String?
+  fulfillmentMethod       FulfillmentMethod
+  shippingAddress         String?
+  pickupSlotDate          DateTime?
+  pickupSlotTime          String?
+  paymentStatus           PaymentStatus @default(PENDING)
+  status                  OrderStatus   @default(PENDING_PHARMACIST_REVIEW)
+  couponCode              String?
+  razorpayOrderId         String?
+  razorpayPaymentId       String?
+  pharmacistReviewComment String?
+  createdAt               DateTime    @default(now())
+  updatedAt               DateTime    @updatedAt
+}
+
+model OrderItem {
+  id         String   @id @default(uuid())
+  medicineId String
+  medicine   Medicine @relation(fields: [medicineId], references: [id])
+  quantity   Int
+  price      Float
+  orderId    String
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+enum FulfillmentMethod {
+  DELIVERY
+  PICKUP
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum OrderStatus {
+  PENDING_PHARMACIST_REVIEW
+  APPROVED
+  REJECTED
+  DISPATCHED
+  DELIVERED
+  READY_FOR_PICKUP
+  COMPLETED
+  CANCELLED
+}
+
+model PickUpSlot {
+  id              String   @id @default(uuid())
+  date            DateTime
+  timeSlot        String
+  maxBookings     Int      @default(5)
+  currentBookings Int      @default(0)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([date, timeSlot])
+}
+
+model Coupon {
+  id             String       @id @default(uuid())
+  code           String       @unique
+  discountType   DiscountType
+  discountValue  Float
+  minOrderAmount Float        @default(0)
+  maxDiscount    Float?
+  expiresAt      DateTime?
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+enum DiscountType {
+  PERCENT
+  FIXED
+}
