@@ -6,9 +6,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const orderController_1 = require("../controllers/orderController");
 const router = express_1.default.Router();
-// Public checkout route
 router.post('/checkout', orderController_1.createOrder);
-// Protected admin/pharmacist routes
+router.get('/summary', orderController_1.getOrderSummary);
+router.get('/:id', orderController_1.getOrderById);
 router.get('/', orderController_1.getOrders);
 router.patch('/:id/status', orderController_1.updateOrderStatus);
 exports.default = router;
