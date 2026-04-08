@@ -129,9 +129,36 @@ const buildSummary = async (where) => {
         byStatus,
     };
 };
+const resolveMedicineForCheckout = async (item) => {
+    if (item.medicineId) {
+        const byId = await prisma_1.default.medicine.findUnique({ where: { id: item.medicineId } });
+        if (byId) {
+            return byId;
+        }
+    }
+    const byName = await prisma_1.default.medicine.findUnique({ where: { name: item.name } });
+    if (byName) {
+        return byName;
+    }
+    return null;
+};
 const createOrder = async (req, res) => {
     try {
         const { user: userData, items, totalAmount, address, prescriptionUrl } = req.body;
+        if (!Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({ message: 'Add at least one medicine before placing the order.' });
+        }
+        const resolvedItems = await Promise.all(items.map(async (item) => {
+            const medicine = await resolveMedicineForCheckout(item);
+            if (!medicine) {
+                throw new Error(`Medicine not found in catalogue: ${item.name}`);
+            }
+            return {
+                medicineId: medicine.id,
+                quantity: item.quantity,
+                price: item.price,
+            };
+        }));
         const user = await prisma_1.default.user.upsert({
             where: { email: userData.email },
             update: { name: userData.name, phone: userData.phone },
@@ -154,9 +181,9 @@ const createOrder = async (req, res) => {
                 status: 'PENDING_PHARMACIST_REVIEW',
                 paymentStatus: 'PENDING',
                 items: {
-                    create: items.map((item) => ({
+                    create: resolvedItems.map((item) => ({
                         medicine: {
-                            connect: { name: item.name },
+                            connect: { id: item.medicineId },
                         },
                         quantity: item.quantity,
                         price: item.price,
@@ -169,7 +196,7 @@ const createOrder = async (req, res) => {
     }
     catch (error) {
         console.error('[Order Controller] Create Order Error:', error);
-        res.status(500).json({ message: 'Error creating order', error: error.message });
+        res.status(500).json({ message: error.message || 'Error creating order', error: error.message });
     }
 };
 exports.createOrder = createOrder;

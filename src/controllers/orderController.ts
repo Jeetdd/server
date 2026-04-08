@@ -19,6 +19,13 @@ const orderInclude = {
 
 const validStatuses = new Set<string>(Object.values(OrderStatus));
 
+type CheckoutItem = {
+  medicineId?: string;
+  name: string;
+  quantity: number;
+  price: number;
+};
+
 const buildOrderWhere = (query: Request['query']): Prisma.OrderWhereInput => {
   const where: Prisma.OrderWhereInput = {};
   const status = typeof query.status === 'string' ? query.status : undefined;
@@ -140,9 +147,47 @@ const buildSummary = async (where: Prisma.OrderWhereInput) => {
   };
 };
 
+const resolveMedicineForCheckout = async (item: CheckoutItem) => {
+  if (item.medicineId) {
+    const byId = await prisma.medicine.findUnique({ where: { id: item.medicineId } });
+    if (byId) {
+      return byId;
+    }
+  }
+
+  const byName = await prisma.medicine.findUnique({ where: { name: item.name } });
+  if (byName) {
+    return byName;
+  }
+
+  return null;
+};
+
 export const createOrder = async (req: Request, res: Response) => {
   try {
-    const { user: userData, items, totalAmount, address, prescriptionUrl } = req.body;
+    const { user: userData, items, totalAmount, address, prescriptionUrl } = req.body as {
+      user: { name: string; email: string; phone?: string };
+      items: CheckoutItem[];
+      totalAmount: number;
+      address: string;
+      prescriptionUrl?: string | null;
+    };
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: 'Add at least one medicine before placing the order.' });
+    }
+
+    const resolvedItems = await Promise.all(items.map(async (item) => {
+      const medicine = await resolveMedicineForCheckout(item);
+      if (!medicine) {
+        throw new Error(`Medicine not found in catalogue: ${item.name}`);
+      }
+      return {
+        medicineId: medicine.id,
+        quantity: item.quantity,
+        price: item.price,
+      };
+    }));
 
     const user = await prisma.user.upsert({
       where: { email: userData.email },
@@ -167,9 +212,9 @@ export const createOrder = async (req: Request, res: Response) => {
         status: 'PENDING_PHARMACIST_REVIEW',
         paymentStatus: 'PENDING',
         items: {
-          create: items.map((item: any) => ({
+          create: resolvedItems.map((item) => ({
             medicine: {
-              connect: { name: item.name },
+              connect: { id: item.medicineId },
             },
             quantity: item.quantity,
             price: item.price,
@@ -182,7 +227,7 @@ export const createOrder = async (req: Request, res: Response) => {
     res.status(201).json(serializeOrder(newOrder));
   } catch (error: any) {
     console.error('[Order Controller] Create Order Error:', error);
-    res.status(500).json({ message: 'Error creating order', error: error.message });
+    res.status(500).json({ message: error.message || 'Error creating order', error: error.message });
   }
 };
 
