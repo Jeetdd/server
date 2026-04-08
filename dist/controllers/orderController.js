@@ -148,49 +148,82 @@ const createOrder = async (req, res) => {
         if (!Array.isArray(items) || items.length === 0) {
             return res.status(400).json({ message: 'Add at least one medicine before placing the order.' });
         }
-        const resolvedItems = await Promise.all(items.map(async (item) => {
-            const medicine = await resolveMedicineForCheckout(item);
-            if (!medicine) {
-                throw new Error(`Medicine not found in catalogue: ${item.name}`);
-            }
-            return {
-                medicineId: medicine.id,
-                quantity: item.quantity,
-                price: item.price,
-            };
-        }));
-        const user = await prisma_1.default.user.upsert({
-            where: { email: userData.email },
-            update: { name: userData.name, phone: userData.phone },
-            create: {
-                name: userData.name,
-                email: userData.email,
-                phone: userData.phone,
-                role: 'USER',
-            },
-        });
-        const newOrder = await prisma_1.default.order.create({
-            data: {
-                userId: user.id,
-                totalAmount,
-                finalAmount: totalAmount,
-                shippingAddress: address,
-                prescriptionImage: prescriptionUrl,
-                fulfillmentMethod: address.includes('PICKUP') ? 'PICKUP' : 'DELIVERY',
-                pickupSlotTime: address.includes('PICKUP') ? address.replace('PICKUP: ', '') : null,
-                status: 'PENDING_PHARMACIST_REVIEW',
-                paymentStatus: 'PENDING',
-                items: {
-                    create: resolvedItems.map((item) => ({
-                        medicine: {
-                            connect: { id: item.medicineId },
-                        },
-                        quantity: item.quantity,
-                        price: item.price,
-                    })),
+        const newOrder = await prisma_1.default.$transaction(async (tx) => {
+            const resolvedItems = await Promise.all(items.map(async (item) => {
+                const medicine = await (async () => {
+                    if (item.medicineId) {
+                        const byId = await tx.medicine.findUnique({ where: { id: item.medicineId } });
+                        if (byId)
+                            return byId;
+                    }
+                    return tx.medicine.findUnique({ where: { name: item.name } });
+                })();
+                if (!medicine) {
+                    throw new Error(`Medicine not found in catalogue: ${item.name}`);
+                }
+                return {
+                    medicine,
+                    quantity: item.quantity,
+                    price: item.price,
+                };
+            }));
+            // Validate + decrement stock (atomic with order create).
+            const decrements = await Promise.all(resolvedItems.map(async (item) => {
+                const beforeStock = item.medicine.stock;
+                const afterStock = beforeStock - item.quantity;
+                if (afterStock < 0) {
+                    throw new Error(`Insufficient stock for ${item.medicine.name}. Available: ${beforeStock}.`);
+                }
+                await tx.medicine.update({
+                    where: { id: item.medicine.id },
+                    data: { stock: afterStock },
+                });
+                return { medicineId: item.medicine.id, name: item.medicine.name, beforeStock, afterStock, quantity: item.quantity, price: item.price };
+            }));
+            const user = await tx.user.upsert({
+                where: { email: userData.email },
+                update: { name: userData.name, phone: userData.phone },
+                create: {
+                    name: userData.name,
+                    email: userData.email,
+                    phone: userData.phone,
+                    role: 'USER',
                 },
-            },
-            include: orderInclude,
+            });
+            const order = await tx.order.create({
+                data: {
+                    userId: user.id,
+                    totalAmount,
+                    finalAmount: totalAmount,
+                    shippingAddress: address,
+                    prescriptionImage: prescriptionUrl,
+                    fulfillmentMethod: address.includes('PICKUP') ? 'PICKUP' : 'DELIVERY',
+                    pickupSlotTime: address.includes('PICKUP') ? address.replace('PICKUP: ', '') : null,
+                    status: 'PENDING_PHARMACIST_REVIEW',
+                    paymentStatus: 'PENDING',
+                    items: {
+                        create: decrements.map((item) => ({
+                            medicine: { connect: { id: item.medicineId } },
+                            quantity: item.quantity,
+                            price: item.price,
+                        })),
+                    },
+                },
+                include: orderInclude,
+            });
+            await tx.inventoryMovement.createMany({
+                data: decrements.map((item) => ({
+                    medicineId: item.medicineId,
+                    type: 'SALE',
+                    delta: -item.quantity,
+                    beforeStock: item.beforeStock,
+                    afterStock: item.afterStock,
+                    reason: 'Checkout',
+                    orderId: order.id,
+                    actorEmail: userData.email,
+                })),
+            });
+            return order;
         });
         res.status(201).json(serializeOrder(newOrder));
     }

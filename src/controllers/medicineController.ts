@@ -45,17 +45,39 @@ export const fuzzySearchMedicines = async (medicinesToMatch: string[]) => {
 
 export const addMedicine = async (req: Request, res: Response) => {
   try {
-    const medicine = await prisma.medicine.create({
-      data: {
-        name: req.body.name,
-        price: req.body.price,
-        stock: req.body.quantity || req.body.stock || 0,
-        category: req.body.category,
-        description: req.body.description,
-        requiresPrescription: req.body.requiresPrescription
+    const requestedStock = Number(req.body.quantity ?? req.body.stock ?? 0);
+    const actorEmail = typeof req.body.actorEmail === 'string' ? req.body.actorEmail.trim() : null;
+
+    const result = await prisma.$transaction(async (tx) => {
+      const medicine = await tx.medicine.create({
+        data: {
+          name: req.body.name,
+          price: req.body.price,
+          stock: Number.isFinite(requestedStock) ? requestedStock : 0,
+          category: req.body.category,
+          description: req.body.description,
+          requiresPrescription: req.body.requiresPrescription,
+        },
+      });
+
+      if ((Number.isFinite(requestedStock) ? requestedStock : 0) > 0) {
+        await tx.inventoryMovement.create({
+          data: {
+            medicineId: medicine.id,
+            type: 'INITIAL_STOCK',
+            delta: medicine.stock,
+            beforeStock: 0,
+            afterStock: medicine.stock,
+            reason: 'Initial stock on create',
+            actorEmail,
+          },
+        });
       }
+
+      return medicine;
     });
-    res.status(201).json(medicine);
+
+    res.status(201).json(result);
   } catch (error) {
     res.status(400).json({ message: 'Error adding medicine', error });
   }
