@@ -5,9 +5,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.updateUserByEmail = exports.getUserByEmail = void 0;
 const prisma_1 = __importDefault(require("../config/prisma"));
+const internalAuth_1 = require("../middlewares/internalAuth");
 const getUserByEmail = async (req, res) => {
     try {
-        const email = typeof req.query.email === 'string' ? req.query.email.trim() : '';
+        const email = (0, internalAuth_1.getInternalUserEmail)(req) || (typeof req.query.email === 'string' ? req.query.email.trim() : '');
         if (!email) {
             return res.status(400).json({ message: 'email is required' });
         }
@@ -27,7 +28,7 @@ const getUserByEmail = async (req, res) => {
 exports.getUserByEmail = getUserByEmail;
 const updateUserByEmail = async (req, res) => {
     try {
-        const email = typeof req.body.email === 'string' ? req.body.email.trim() : '';
+        const email = (0, internalAuth_1.getInternalUserEmail)(req) || (typeof req.body.email === 'string' ? req.body.email.trim() : '');
         if (!email) {
             return res.status(400).json({ message: 'email is required' });
         }

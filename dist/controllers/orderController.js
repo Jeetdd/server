@@ -7,6 +7,7 @@ exports.updateOrderStatus = exports.getOrderById = exports.getOrderSummary = exp
 const prisma_1 = __importDefault(require("../config/prisma"));
 const client_1 = require("@prisma/client");
 const razorpay_1 = __importDefault(require("razorpay"));
+const internalAuth_1 = require("../middlewares/internalAuth");
 const razorpay = new razorpay_1.default({
     key_id: process.env.RAZORPAY_KEY_ID || 'dummy_id',
     key_secret: process.env.RAZORPAY_KEY_SECRET || 'dummy_secret',
@@ -167,18 +168,13 @@ const createOrder = async (req, res) => {
                     price: item.price,
                 };
             }));
-            // Validate + decrement stock (atomic with order create).
-            const decrements = await Promise.all(resolvedItems.map(async (item) => {
+            // Validate stock at checkout, but do not deduct until the order is approved.
+            const validatedItems = await Promise.all(resolvedItems.map(async (item) => {
                 const beforeStock = item.medicine.stock;
-                const afterStock = beforeStock - item.quantity;
-                if (afterStock < 0) {
+                if (beforeStock - item.quantity < 0) {
                     throw new Error(`Insufficient stock for ${item.medicine.name}. Available: ${beforeStock}.`);
                 }
-                await tx.medicine.update({
-                    where: { id: item.medicine.id },
-                    data: { stock: afterStock },
-                });
-                return { medicineId: item.medicine.id, name: item.medicine.name, beforeStock, afterStock, quantity: item.quantity, price: item.price };
+                return { medicineId: item.medicine.id, quantity: item.quantity, price: item.price };
             }));
             const user = await tx.user.upsert({
                 where: { email: userData.email },
@@ -201,8 +197,9 @@ const createOrder = async (req, res) => {
                     pickupSlotTime: address.includes('PICKUP') ? address.replace('PICKUP: ', '') : null,
                     status: 'PENDING_PHARMACIST_REVIEW',
                     paymentStatus: 'PENDING',
+                    inventoryApplied: false,
                     items: {
-                        create: decrements.map((item) => ({
+                        create: validatedItems.map((item) => ({
                             medicine: { connect: { id: item.medicineId } },
                             quantity: item.quantity,
                             price: item.price,
@@ -210,18 +207,6 @@ const createOrder = async (req, res) => {
                     },
                 },
                 include: orderInclude,
-            });
-            await tx.inventoryMovement.createMany({
-                data: decrements.map((item) => ({
-                    medicineId: item.medicineId,
-                    type: 'SALE',
-                    delta: -item.quantity,
-                    beforeStock: item.beforeStock,
-                    afterStock: item.afterStock,
-                    reason: 'Checkout',
-                    orderId: order.id,
-                    actorEmail: userData.email,
-                })),
             });
             return order;
         });
@@ -250,7 +235,7 @@ const getOrders = async (req, res) => {
 exports.getOrders = getOrders;
 const getMyOrders = async (req, res) => {
     try {
-        const email = typeof req.query.email === 'string' ? req.query.email.trim() : '';
+        const email = (0, internalAuth_1.getInternalUserEmail)(req) || (typeof req.query.email === 'string' ? req.query.email.trim() : '');
         if (!email) {
             return res.status(400).json({ message: 'email is required' });
         }
@@ -321,12 +306,71 @@ const updateOrderStatus = async (req, res) => {
         if (paymentStatus) {
             data.paymentStatus = paymentStatus;
         }
-        const order = await prisma_1.default.order.update({
-            where: { id: orderId },
-            data,
-            include: orderInclude,
+        const updated = await prisma_1.default.$transaction(async (tx) => {
+            const existing = await tx.order.findUnique({
+                where: { id: orderId },
+                include: orderInclude,
+            });
+            if (!existing) {
+                throw new Error('Order not found');
+            }
+            const nextStatus = status ? status : existing.status;
+            const wasApplied = existing.inventoryApplied;
+            // Apply or revert inventory when status changes.
+            // Deduct on APPROVED, restore on CANCELLED/REJECTED.
+            if (nextStatus === 'APPROVED' && !wasApplied) {
+                const adjustments = await Promise.all(existing.items.map(async (item) => {
+                    const beforeStock = item.medicine.stock;
+                    const afterStock = beforeStock - item.quantity;
+                    if (afterStock < 0) {
+                        throw new Error(`Insufficient stock for ${item.medicine.name}. Available: ${beforeStock}.`);
+                    }
+                    await tx.medicine.update({ where: { id: item.medicineId }, data: { stock: afterStock } });
+                    return { medicineId: item.medicineId, beforeStock, afterStock, quantity: item.quantity };
+                }));
+                await tx.inventoryMovement.createMany({
+                    data: adjustments.map((a) => ({
+                        medicineId: a.medicineId,
+                        type: 'SALE',
+                        delta: -a.quantity,
+                        beforeStock: a.beforeStock,
+                        afterStock: a.afterStock,
+                        reason: 'Order approved',
+                        orderId: existing.id,
+                        actorEmail: existing.user.email,
+                    })),
+                });
+                data.inventoryApplied = true;
+            }
+            if ((nextStatus === 'CANCELLED' || nextStatus === 'REJECTED') && wasApplied) {
+                const adjustments = await Promise.all(existing.items.map(async (item) => {
+                    const beforeStock = item.medicine.stock;
+                    const afterStock = beforeStock + item.quantity;
+                    await tx.medicine.update({ where: { id: item.medicineId }, data: { stock: afterStock } });
+                    return { medicineId: item.medicineId, beforeStock, afterStock, quantity: item.quantity };
+                }));
+                await tx.inventoryMovement.createMany({
+                    data: adjustments.map((a) => ({
+                        medicineId: a.medicineId,
+                        type: 'CANCELLED_ORDER',
+                        delta: a.quantity,
+                        beforeStock: a.beforeStock,
+                        afterStock: a.afterStock,
+                        reason: 'Order cancelled/rejected',
+                        orderId: existing.id,
+                        actorEmail: existing.user.email,
+                    })),
+                });
+                data.inventoryApplied = false;
+            }
+            const order = await tx.order.update({
+                where: { id: orderId },
+                data,
+                include: orderInclude,
+            });
+            return order;
         });
-        res.json(serializeOrder(order));
+        res.json(serializeOrder(updated));
     }
     catch (error) {
         res.status(500).json({ message: 'Error updating order status', error: error.message });

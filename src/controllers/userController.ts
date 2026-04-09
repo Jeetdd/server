@@ -1,9 +1,10 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma';
+import { getInternalUserEmail } from '../middlewares/internalAuth';
 
 export const getUserByEmail = async (req: Request, res: Response) => {
   try {
-    const email = typeof req.query.email === 'string' ? req.query.email.trim() : '';
+    const email = getInternalUserEmail(req) || (typeof req.query.email === 'string' ? req.query.email.trim() : '');
     if (!email) {
       return res.status(400).json({ message: 'email is required' });
     }
@@ -25,7 +26,7 @@ export const getUserByEmail = async (req: Request, res: Response) => {
 
 export const updateUserByEmail = async (req: Request, res: Response) => {
   try {
-    const email = typeof req.body.email === 'string' ? req.body.email.trim() : '';
+    const email = getInternalUserEmail(req) || (typeof req.body.email === 'string' ? req.body.email.trim() : '');
     if (!email) {
       return res.status(400).json({ message: 'email is required' });
     }

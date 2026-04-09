@@ -87,6 +87,7 @@ model Order {
   razorpayOrderId         String?
   razorpayPaymentId       String?
   pharmacistReviewComment String?
+  inventoryApplied        Boolean     @default(false)
   createdAt               DateTime    @default(now())
   updatedAt               DateTime    @updatedAt
 }
@@ -140,6 +141,7 @@ model Prescription {
   id               String   @id @default(uuid())
   userId           String
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label            String?
   imageUrl         String
   detectedMedicines Json
   createdAt        DateTime @default(now())

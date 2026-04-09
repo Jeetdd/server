@@ -3,10 +3,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPrescriptionById = exports.getMyPrescriptions = exports.analyzePrescription = void 0;
+exports.deletePrescription = exports.updatePrescriptionLabel = exports.getPrescriptionById = exports.getMyPrescriptions = exports.analyzePrescription = void 0;
 const geminiVision_1 = require("../utils/geminiVision");
 const medicineController_1 = require("./medicineController");
 const prisma_1 = __importDefault(require("../config/prisma"));
+const internalAuth_1 = require("../middlewares/internalAuth");
 const analyzePrescription = async (req, res) => {
     try {
         if (!req.file) {
@@ -91,7 +92,7 @@ const analyzePrescription = async (req, res) => {
 exports.analyzePrescription = analyzePrescription;
 const getMyPrescriptions = async (req, res) => {
     try {
-        const email = typeof req.query.email === 'string' ? req.query.email.trim() : '';
+        const email = (0, internalAuth_1.getInternalUserEmail)(req) || (typeof req.query.email === 'string' ? req.query.email.trim() : '');
         if (!email) {
             return res.status(400).json({ message: 'email is required' });
         }
@@ -104,6 +105,7 @@ const getMyPrescriptions = async (req, res) => {
             orderBy: { createdAt: 'desc' },
             select: {
                 id: true,
+                label: true,
                 imageUrl: true,
                 createdAt: true,
                 updatedAt: true,
@@ -123,22 +125,99 @@ const getPrescriptionById = async (req, res) => {
         if (!id) {
             return res.status(400).json({ message: 'id is required' });
         }
+        const email = (0, internalAuth_1.getInternalUserEmail)(req);
+        if (!email) {
+            return res.status(400).json({ message: 'x-user-email is required' });
+        }
+        const user = await prisma_1.default.user.findUnique({ where: { email }, select: { id: true } });
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
         const prescription = await prisma_1.default.prescription.findUnique({
             where: { id },
             select: {
                 id: true,
+                label: true,
                 imageUrl: true,
                 detectedMedicines: true,
                 createdAt: true,
+                userId: true,
             },
         });
         if (!prescription) {
             return res.status(404).json({ message: 'Prescription not found' });
         }
-        res.json(prescription);
+        if (prescription.userId !== user.id) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+        const { userId, ...safe } = prescription;
+        res.json(safe);
     }
     catch (error) {
         res.status(500).json({ message: 'Error fetching prescription', error: error.message });
     }
 };
 exports.getPrescriptionById = getPrescriptionById;
+const updatePrescriptionLabel = async (req, res) => {
+    try {
+        const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        if (!id) {
+            return res.status(400).json({ message: 'id is required' });
+        }
+        const email = (0, internalAuth_1.getInternalUserEmail)(req);
+        if (!email) {
+            return res.status(400).json({ message: 'x-user-email is required' });
+        }
+        const label = typeof req.body.label === 'string' ? req.body.label.trim() : '';
+        const user = await prisma_1.default.user.findUnique({ where: { email }, select: { id: true } });
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        const existing = await prisma_1.default.prescription.findUnique({ where: { id }, select: { userId: true } });
+        if (!existing) {
+            return res.status(404).json({ message: 'Prescription not found' });
+        }
+        if (existing.userId !== user.id) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+        const updated = await prisma_1.default.prescription.update({
+            where: { id },
+            data: { label: label || null },
+            select: { id: true, label: true, imageUrl: true, updatedAt: true },
+        });
+        res.json(updated);
+    }
+    catch (error) {
+        res.status(400).json({ message: error.message || 'Error updating prescription', error: error.message });
+    }
+};
+exports.updatePrescriptionLabel = updatePrescriptionLabel;
+const deletePrescription = async (req, res) => {
+    try {
+        const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        if (!id) {
+            return res.status(400).json({ message: 'id is required' });
+        }
+        const email = (0, internalAuth_1.getInternalUserEmail)(req);
+        if (!email) {
+            return res.status(400).json({ message: 'x-user-email is required' });
+        }
+        const user = await prisma_1.default.user.findUnique({ where: { email }, select: { id: true } });
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        const existing = await prisma_1.default.prescription.findUnique({ where: { id }, select: { userId: true } });
+        if (!existing) {
+            return res.status(404).json({ message: 'Prescription not found' });
+        }
+        if (existing.userId !== user.id) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+        await prisma_1.default.prescription.delete({ where: { id } });
+        res.json({ success: true });
+    }
+    catch (error) {
+        res.status(400).json({ message: error.message || 'Error deleting prescription', error: error.message });
+    }
+};
+exports.deletePrescription = deletePrescription;
