@@ -33,11 +33,20 @@ const updateUserByEmail = async (req, res) => {
         }
         const name = typeof req.body.name === 'string' ? req.body.name.trim() : undefined;
         const phone = typeof req.body.phone === 'string' ? req.body.phone.trim() : undefined;
-        const updated = await prisma_1.default.user.update({
+        // Use upsert so Google-only sessions can still update profile before any order/checkout creates the user row.
+        const updated = await prisma_1.default.user.upsert({
             where: { email },
-            data: {
+            update: {
                 ...(typeof name === 'string' && name ? { name } : {}),
                 ...(typeof phone === 'string' ? { phone: phone || null } : {}),
+                isRegistered: true,
+            },
+            create: {
+                name: name || email.split('@')[0] || 'User',
+                email,
+                phone: typeof phone === 'string' ? (phone || null) : null,
+                role: 'USER',
+                isRegistered: true,
             },
             select: { id: true, name: true, email: true, phone: true, role: true, updatedAt: true },
         });
