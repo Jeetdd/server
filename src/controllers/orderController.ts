@@ -289,6 +289,26 @@ export const getOrders = async (req: Request, res: Response) => {
   }
 };
 
+export const getMyOrders = async (req: Request, res: Response) => {
+  try {
+    const email = typeof req.query.email === 'string' ? req.query.email.trim() : '';
+    if (!email) {
+      return res.status(400).json({ message: 'email is required' });
+    }
+
+    const orders = await prisma.order.findMany({
+      where: { user: { email } },
+      include: orderInclude,
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+
+    res.json(orders.map(serializeOrder));
+  } catch (error: any) {
+    res.status(500).json({ message: 'Error fetching user orders', error: error.message });
+  }
+};
+
 export const getOrderSummary = async (req: Request, res: Response) => {
   try {
     const where = buildOrderWhere(req.query);

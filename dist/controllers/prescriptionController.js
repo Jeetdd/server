@@ -1,8 +1,12 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.analyzePrescription = void 0;
+exports.getPrescriptionById = exports.getMyPrescriptions = exports.analyzePrescription = void 0;
 const geminiVision_1 = require("../utils/geminiVision");
 const medicineController_1 = require("./medicineController");
+const prisma_1 = __importDefault(require("../config/prisma"));
 const analyzePrescription = async (req, res) => {
     try {
         if (!req.file) {
@@ -39,9 +43,41 @@ const analyzePrescription = async (req, res) => {
             };
         });
         console.log('[Prescription] Final merged results:', mergedResults);
+        const imageUrl = `/uploads/${req.file.filename}`;
+        const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+        const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+        let prescriptionId = null;
+        if (email) {
+            try {
+                const user = await prisma_1.default.user.upsert({
+                    where: { email },
+                    update: name ? { name } : {},
+                    create: {
+                        name: name || email.split('@')[0] || 'User',
+                        email,
+                        role: 'USER',
+                        isRegistered: true,
+                    },
+                });
+                const saved = await prisma_1.default.prescription.create({
+                    data: {
+                        userId: user.id,
+                        imageUrl,
+                        detectedMedicines: mergedResults,
+                    },
+                    select: { id: true },
+                });
+                prescriptionId = saved.id;
+            }
+            catch (saveError) {
+                console.error('[Prescription] Save failed:', saveError);
+            }
+        }
         res.json({
-            imageUrl: `/uploads/${req.file.filename}`,
+            imageUrl,
             detectedMedicines: mergedResults,
+            prescriptionId,
+            saved: Boolean(prescriptionId),
         });
     }
     catch (error) {
@@ -53,3 +89,56 @@ const analyzePrescription = async (req, res) => {
     }
 };
 exports.analyzePrescription = analyzePrescription;
+const getMyPrescriptions = async (req, res) => {
+    try {
+        const email = typeof req.query.email === 'string' ? req.query.email.trim() : '';
+        if (!email) {
+            return res.status(400).json({ message: 'email is required' });
+        }
+        const user = await prisma_1.default.user.findUnique({ where: { email }, select: { id: true } });
+        if (!user) {
+            return res.json([]);
+        }
+        const prescriptions = await prisma_1.default.prescription.findMany({
+            where: { userId: user.id },
+            orderBy: { createdAt: 'desc' },
+            select: {
+                id: true,
+                imageUrl: true,
+                createdAt: true,
+                updatedAt: true,
+            },
+            take: 50,
+        });
+        res.json(prescriptions);
+    }
+    catch (error) {
+        res.status(500).json({ message: 'Error fetching prescriptions', error: error.message });
+    }
+};
+exports.getMyPrescriptions = getMyPrescriptions;
+const getPrescriptionById = async (req, res) => {
+    try {
+        const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        if (!id) {
+            return res.status(400).json({ message: 'id is required' });
+        }
+        const prescription = await prisma_1.default.prescription.findUnique({
+            where: { id },
+            select: {
+                id: true,
+                imageUrl: true,
+                detectedMedicines: true,
+                createdAt: true,
+            },
+        });
+        if (!prescription) {
+            return res.status(404).json({ message: 'Prescription not found' });
+        }
+        res.json(prescription);
+    }
+    catch (error) {
+        res.status(500).json({ message: 'Error fetching prescription', error: error.message });
+    }
+};
+exports.getPrescriptionById = getPrescriptionById;

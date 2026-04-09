@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { analyzePrescriptionImage } from '../utils/geminiVision';
 import { fuzzySearchMedicines } from './medicineController';
+import prisma from '../config/prisma';
 
 export const analyzePrescription = async (req: Request, res: Response) => {
   try {
@@ -45,9 +46,45 @@ export const analyzePrescription = async (req: Request, res: Response) => {
 
     console.log('[Prescription] Final merged results:', mergedResults);
 
+    const imageUrl = `/uploads/${req.file.filename}`;
+
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+
+    let prescriptionId: string | null = null;
+    if (email) {
+      try {
+        const user = await prisma.user.upsert({
+          where: { email },
+          update: name ? { name } : {},
+          create: {
+            name: name || email.split('@')[0] || 'User',
+            email,
+            role: 'USER',
+            isRegistered: true,
+          },
+        });
+
+        const saved = await prisma.prescription.create({
+          data: {
+            userId: user.id,
+            imageUrl,
+            detectedMedicines: mergedResults as any,
+          },
+          select: { id: true },
+        });
+
+        prescriptionId = saved.id;
+      } catch (saveError) {
+        console.error('[Prescription] Save failed:', saveError);
+      }
+    }
+
     res.json({
-      imageUrl: `/uploads/${req.file.filename}`,
+      imageUrl,
       detectedMedicines: mergedResults,
+      prescriptionId,
+      saved: Boolean(prescriptionId),
     });
 
   } catch (error: any) {
@@ -56,5 +93,62 @@ export const analyzePrescription = async (req: Request, res: Response) => {
       message: error.message || 'Error analyzing prescription', 
       error: error.toString() 
     });
+  }
+};
+
+export const getMyPrescriptions = async (req: Request, res: Response) => {
+  try {
+    const email = typeof req.query.email === 'string' ? req.query.email.trim() : '';
+    if (!email) {
+      return res.status(400).json({ message: 'email is required' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+    if (!user) {
+      return res.json([]);
+    }
+
+    const prescriptions = await prisma.prescription.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        imageUrl: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      take: 50,
+    });
+
+    res.json(prescriptions);
+  } catch (error: any) {
+    res.status(500).json({ message: 'Error fetching prescriptions', error: error.message });
+  }
+};
+
+export const getPrescriptionById = async (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    if (!id) {
+      return res.status(400).json({ message: 'id is required' });
+    }
+
+    const prescription = await prisma.prescription.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        imageUrl: true,
+        detectedMedicines: true,
+        createdAt: true,
+      },
+    });
+
+    if (!prescription) {
+      return res.status(404).json({ message: 'Prescription not found' });
+    }
+
+    res.json(prescription);
+  } catch (error: any) {
+    res.status(500).json({ message: 'Error fetching prescription', error: error.message });
   }
 };

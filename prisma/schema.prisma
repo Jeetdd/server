@@ -18,6 +18,7 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   Order        Order[]
+  Prescription Prescription[]
 }
 
 enum Role {
@@ -133,6 +134,18 @@ model PickUpSlot {
   updatedAt       DateTime @updatedAt
 
   @@unique([date, timeSlot])
+}
+
+model Prescription {
+  id               String   @id @default(uuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  imageUrl         String
+  detectedMedicines Json
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([userId, createdAt])
 }
 
 model Coupon {

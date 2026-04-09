@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.updateOrderStatus = exports.getOrderById = exports.getOrderSummary = exports.getOrders = exports.createOrder = void 0;
+exports.updateOrderStatus = exports.getOrderById = exports.getOrderSummary = exports.getMyOrders = exports.getOrders = exports.createOrder = void 0;
 const prisma_1 = __importDefault(require("../config/prisma"));
 const client_1 = require("@prisma/client");
 const razorpay_1 = __importDefault(require("razorpay"));
@@ -248,6 +248,25 @@ const getOrders = async (req, res) => {
     }
 };
 exports.getOrders = getOrders;
+const getMyOrders = async (req, res) => {
+    try {
+        const email = typeof req.query.email === 'string' ? req.query.email.trim() : '';
+        if (!email) {
+            return res.status(400).json({ message: 'email is required' });
+        }
+        const orders = await prisma_1.default.order.findMany({
+            where: { user: { email } },
+            include: orderInclude,
+            orderBy: { createdAt: 'desc' },
+            take: 100,
+        });
+        res.json(orders.map(serializeOrder));
+    }
+    catch (error) {
+        res.status(500).json({ message: 'Error fetching user orders', error: error.message });
+    }
+};
+exports.getMyOrders = getMyOrders;
 const getOrderSummary = async (req, res) => {
     try {
         const where = buildOrderWhere(req.query);

@@ -8,6 +8,7 @@ import authRoutes from './routes/authRoutes';
 import slotRoutes from './routes/slotRoutes';
 import orderRoutes from './routes/orderRoutes';
 import inventoryRoutes from './routes/inventoryRoutes';
+import userRoutes from './routes/userRoutes';
 
 dotenv.config();
 
@@ -27,6 +28,7 @@ app.use('/api/prescriptions', prescriptionRoutes);
 app.use('/api/slots', slotRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/inventory', inventoryRoutes);
+app.use('/api/users', userRoutes);
 
 app.get('/', (req: Request, res: Response) => {
   res.send('SkinShop Backend API is running with PostgreSQL & Prisma...');

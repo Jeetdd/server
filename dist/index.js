@@ -12,6 +12,7 @@ const authRoutes_1 = __importDefault(require("./routes/authRoutes"));
 const slotRoutes_1 = __importDefault(require("./routes/slotRoutes"));
 const orderRoutes_1 = __importDefault(require("./routes/orderRoutes"));
 const inventoryRoutes_1 = __importDefault(require("./routes/inventoryRoutes"));
+const userRoutes_1 = __importDefault(require("./routes/userRoutes"));
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 5001;
@@ -26,6 +27,7 @@ app.use('/api/prescriptions', prescriptionRoutes_1.default);
 app.use('/api/slots', slotRoutes_1.default);
 app.use('/api/orders', orderRoutes_1.default);
 app.use('/api/inventory', inventoryRoutes_1.default);
+app.use('/api/users', userRoutes_1.default);
 app.get('/', (req, res) => {
     res.send('SkinShop Backend API is running with PostgreSQL & Prisma...');
 });
