@@ -166,12 +166,20 @@ const resolveMedicineForCheckout = async (item: CheckoutItem) => {
 
 export const createOrder = async (req: Request, res: Response) => {
   try {
-    const { user: userData, items, totalAmount, address, prescriptionUrl } = req.body as {
+    const { 
+      user: userData, 
+      items, 
+      totalAmount, 
+      address, 
+      prescriptionUrl,
+      redeemPoints 
+    } = req.body as {
       user: { name: string; email: string; phone?: string };
       items: CheckoutItem[];
       totalAmount: number;
       address: string;
       prescriptionUrl?: string | null;
+      redeemPoints?: boolean;
     };
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -179,6 +187,46 @@ export const createOrder = async (req: Request, res: Response) => {
     }
 
     const newOrder = await prisma.$transaction(async (tx) => {
+      // 1. Find or create user
+      const user = await tx.user.upsert({
+        where: { email: userData.email },
+        update: { name: userData.name, phone: userData.phone },
+        create: {
+          name: userData.name,
+          email: userData.email,
+          phone: userData.phone,
+          role: 'USER',
+        },
+      });
+
+      // 2. Handle Loyalty Points Redemption
+      let finalAmount = totalAmount;
+      let pointsRedeemed = 0;
+      let pointsDiscount = 0;
+
+      if (redeemPoints && user.loyaltyPoints > 0) {
+        // 100 points = 1 Rs
+        const maxRedeemablePoints = Math.floor(totalAmount * 100);
+        pointsRedeemed = Math.min(user.loyaltyPoints, maxRedeemablePoints);
+        pointsDiscount = pointsRedeemed / 100;
+        finalAmount = totalAmount - pointsDiscount;
+
+        await tx.user.update({
+          where: { id: user.id },
+          data: { loyaltyPoints: { decrement: pointsRedeemed } }
+        });
+
+        await tx.pointsTransaction.create({
+          data: {
+            userId: user.id,
+            amount: -pointsRedeemed,
+            type: 'REDEEMED',
+            reason: `Redeemed on order creation`,
+          }
+        });
+      }
+
+      // 3. Resolve Items and Validate Stock
       const resolvedItems = await Promise.all(
         items.map(async (item) => {
           const medicine = await (async () => {
@@ -193,41 +241,24 @@ export const createOrder = async (req: Request, res: Response) => {
             throw new Error(`Medicine not found in catalogue: ${item.name}`);
           }
 
+          if (medicine.stock - item.quantity < 0) {
+            throw new Error(`Insufficient stock for ${medicine.name}. Available: ${medicine.stock}.`);
+          }
+
           return {
-            medicine,
+            medicineId: medicine.id,
             quantity: item.quantity,
             price: item.price,
           };
         }),
       );
 
-      // Validate stock at checkout, but do not deduct until the order is approved.
-      const validatedItems = await Promise.all(
-        resolvedItems.map(async (item) => {
-          const beforeStock = item.medicine.stock;
-          if (beforeStock - item.quantity < 0) {
-            throw new Error(`Insufficient stock for ${item.medicine.name}. Available: ${beforeStock}.`);
-          }
-          return { medicineId: item.medicine.id, quantity: item.quantity, price: item.price };
-        }),
-      );
-
-      const user = await tx.user.upsert({
-        where: { email: userData.email },
-        update: { name: userData.name, phone: userData.phone },
-        create: {
-          name: userData.name,
-          email: userData.email,
-          phone: userData.phone,
-          role: 'USER',
-        },
-      });
-
+      // 4. Create Order
       const order = await tx.order.create({
         data: {
           userId: user.id,
           totalAmount,
-          finalAmount: totalAmount,
+          finalAmount, // Using the amount after points redemption
           shippingAddress: address,
           prescriptionImage: prescriptionUrl,
           fulfillmentMethod: address.includes('PICKUP') ? 'PICKUP' : 'DELIVERY',
@@ -236,7 +267,7 @@ export const createOrder = async (req: Request, res: Response) => {
           paymentStatus: 'PENDING',
           inventoryApplied: false,
           items: {
-            create: validatedItems.map((item) => ({
+            create: resolvedItems.map((item) => ({
               medicine: { connect: { id: item.medicineId } },
               quantity: item.quantity,
               price: item.price,
@@ -423,6 +454,52 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
         });
 
         (data as any).inventoryApplied = false;
+      }
+
+      // Award Loyalty Points on payment success
+      if (paymentStatus === 'SUCCESS' && existing.paymentStatus !== 'SUCCESS') {
+        const pointsEarned = Math.floor(existing.finalAmount / 100);
+        if (pointsEarned > 0) {
+          await tx.user.update({
+            where: { id: existing.userId },
+            data: { loyaltyPoints: { increment: pointsEarned } },
+          });
+          await tx.pointsTransaction.create({
+            data: {
+              userId: existing.userId,
+              amount: pointsEarned,
+              type: 'EARNED',
+              reason: `Earned from order #${orderId.slice(-8)}`,
+            },
+          });
+        }
+
+        // Handle Referral Reward (First order only)
+        const referral = await tx.referral.findUnique({
+          where: { referredUserId: existing.userId },
+          include: { referrer: true }
+        });
+
+        if (referral && referral.status === 'PENDING') {
+          await tx.referral.update({
+            where: { id: referral.id },
+            data: { status: 'SUCCESSFUL', rewardPoints: 50 } // Fixed bonus for now
+          });
+
+          await tx.user.update({
+            where: { id: referral.referrerId },
+            data: { loyaltyPoints: { increment: 50 } }
+          });
+
+          await tx.pointsTransaction.create({
+            data: {
+              userId: referral.referrerId,
+              amount: 50,
+              type: 'EARNED',
+              reason: `Referral bonus for ${existing.user.name}`,
+            }
+          });
+        }
       }
 
       const order = await tx.order.update({

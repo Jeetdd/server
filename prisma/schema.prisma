@@ -14,11 +14,46 @@ model User {
   password     String?
   role         Role     @default(USER)
   phone        String?
-  isRegistered Boolean  @default(false)
+  referralCode String   @unique @default(uuid())
+  loyaltyPoints Float    @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   Order        Order[]
   Prescription Prescription[]
+  PointsTransactions PointsTransaction[]
+  ReferralsMade      Referral[] @relation("Referrer")
+  Referrer           Referral?  @relation("ReferredUser")
+}
+
+model PointsTransaction {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  amount    Float
+  type      PointsTransactionType
+  reason    String
+  createdAt DateTime @default(now())
+}
+
+enum PointsTransactionType {
+  EARNED
+  REDEEMED
+}
+
+model Referral {
+  id             String   @id @default(uuid())
+  referrerId     String
+  referrer       User     @relation("Referrer", fields: [referrerId], references: [id])
+  referredUserId String   @unique
+  referredUser   User     @relation("ReferredUser", fields: [referredUserId], references: [id])
+  rewardPoints   Float    @default(0)
+  status         ReferralStatus @default(PENDING)
+  createdAt      DateTime @default(now())
+}
+
+enum ReferralStatus {
+  PENDING
+  SUCCESSFUL
 }
 
 enum Role {
