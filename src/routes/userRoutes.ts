@@ -1,3 +1,4 @@
+import express from 'express';
 import { getUserByEmail, updateUserByEmail, getUsers, adjustPoints, getPointsTransactions } from '../controllers/userController';
 import { requireInternalToken } from '../middlewares/internalAuth';
 

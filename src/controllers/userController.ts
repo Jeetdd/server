@@ -9,8 +9,16 @@ export const getUserByEmail = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'email is required' });
     }
 
-    const user = await prisma.user.findUnique({
+    // Lazy-create user if they don't exist yet (especially for Google OAuth users)
+    const user = await prisma.user.upsert({
       where: { email },
+      update: {},
+      create: {
+        email,
+        name: email.split('@')[0] || 'User',
+        role: 'USER',
+        referralCode: `SKIN-${Math.random().toString(36).substring(2, 6).toUpperCase()}`
+      },
       select: { 
         id: true, 
         name: true, 
@@ -22,10 +30,6 @@ export const getUserByEmail = async (req: Request, res: Response) => {
         loyaltyPoints: true
       },
     });
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
 
     res.json(user);
   } catch (error: any) {
@@ -97,7 +101,7 @@ export const getUsers = async (req: Request, res: Response) => {
 
 export const getPointsTransactions = async (req: Request, res: Response) => {
   try {
-    const { userId } = req.params;
+    const userId = typeof req.params.userId === 'string' ? req.params.userId : undefined;
     const transactions = await prisma.pointsTransaction.findMany({
       where: userId ? { userId } : {},
       orderBy: { createdAt: 'desc' },
