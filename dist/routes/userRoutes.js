@@ -9,4 +9,8 @@ const internalAuth_1 = require("../middlewares/internalAuth");
 const router = express_1.default.Router();
 router.get('/me', internalAuth_1.requireInternalToken, userController_1.getUserByEmail);
 router.patch('/me', internalAuth_1.requireInternalToken, userController_1.updateUserByEmail);
+// Admin routes
+router.get('/', internalAuth_1.requireInternalToken, userController_1.getUsers);
+router.post('/points/adjust', internalAuth_1.requireInternalToken, userController_1.adjustPoints);
+router.get('/points/transactions/:userId?', internalAuth_1.requireInternalToken, userController_1.getPointsTransactions);
 exports.default = router;
